@@ -1,99 +1,84 @@
 #!/usr/bin/env python3
 """
-YOLO Character Recognition Web GUI
-Flask web interface for webcam character recognition
+PyTorch YOLO Character Recognition Web GUI
+Flask web interface for webcam character recognition using PyTorch model
 """
 
-from flask import Flask, render_template, Response, jsonify, request
+from flask import Flask, render_template, Response, jsonify
 import cv2
 import numpy as np
-import onnxruntime as ort
-import base64
 import time
 import os
-import threading
-from io import BytesIO
+from ultralytics import YOLO
+import torch
 
 app = Flask(__name__)
 
 class WebcamPredictor:
     def __init__(self):
         self.cap = None
-        self.session = None
+        self.model = None
         self.class_names = None
         self.is_running = False
         self.current_frame = None
         self.latest_prediction = {"class": "None", "confidence": 0.0, "timestamp": ""}
         self.roi_size = 224
-        self.output_dir = "webcam_predictions"
+        self.output_dir = "pytorch_predictions"
         os.makedirs(self.output_dir, exist_ok=True)
         self.load_model()
         
     def load_model(self):
-        """Load the ONNX model"""
+        """Load the PyTorch YOLO model"""
         try:
-            # Look for ONNX models in various locations
-            possible_paths = [
-                "/home/nvidia10/runs/classify/train2/weights/best.onnx"
-            ]
+            model_path = "/home/{USERNAME}/FinalProject/classify/train3/weights/best.pt"
             
-            model_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    model_path = path
-                    break
-                    
-            if not model_path:
-                print("❌ No ONNX model found. Please export your YOLO model to ONNX format first.")
+            if not os.path.exists(model_path):
+                print(f"❌ PyTorch model not found at {model_path}")
                 return False
             
-            # Load ONNX model
-            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if 'cuda' in str(ort.get_available_providers()).lower() else ['CPUExecutionProvider']
-            self.session = ort.InferenceSession(model_path, providers=providers)
+            # Load PyTorch YOLO model
+            self.model = YOLO(model_path)
             
-            # Get input and output details
-            self.input_name = self.session.get_inputs()[0].name
-            self.output_name = self.session.get_outputs()[0].name
-            self.input_shape = self.session.get_inputs()[0].shape
-            
-            # Load class names based on actual training data structure
-            # Get classes from the training directory structure
-            train_dir = "/home/nvidia10/datasets/lettersdatabase/train"
-            if os.path.exists(train_dir):
-                self.class_names = sorted([d for d in os.listdir(train_dir) 
-                                         if os.path.isdir(os.path.join(train_dir, d))])
-                print(f"📂 Loaded {len(self.class_names)} classes from training data: {self.class_names}")
+            # Load class names from lettersdatabase2
+            labels_file = "/home/{USERNAME}/FinalProject/lettersdatabase2/labels.txt"
+            if os.path.exists(labels_file):
+                with open(labels_file, 'r') as f:
+                    self.class_names = [line.strip() for line in f.readlines()]
+                print(f"📂 Loaded {len(self.class_names)} classes from labels.txt: {self.class_names}")
             else:
-                # Fallback to manual list if training dir not found
-                self.class_names = [
-                    "0","1","2","3","4","5","6","7","8","9",
-                    "A","B","C","D","E","F","G","H","I","J",
-                    "K","L","M","N","O","P","Q","R","S","T",
-                    "U","V","W","X","Y","Z",
-                    "Apostraphe","Comma","Period","Slash","Question Mark","Exclamation Mark"
-                ]
-                print(f"⚠️ Using fallback class names: {len(self.class_names)} classes")
+                # Fallback to A-Z if labels file not found
+                self.class_names = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+                                  'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+                                  'U', 'V', 'W', 'X', 'Y', 'Z']
+                print(f"⚠️ Using fallback class names (A-Z): {len(self.class_names)} classes")
             
-            print(f"✅ ONNX model loaded successfully from {model_path}")
-            print(f"📊 Input shape: {self.input_shape}")
-            print(f"📊 Providers: {self.session.get_providers()}")
-            print(f"📊 Classes: {len(self.class_names)}")
+            # Verify model and classes match
+            model_classes = len(self.model.names)
+            if model_classes != len(self.class_names):
+                print(f"⚠️ Model has {model_classes} classes but dataset has {len(self.class_names)} classes")
+            
+            print(f"✅ PyTorch YOLO model loaded successfully from {model_path}")
+            print(f"� Model classes: {model_classes}")
+            print(f"� Dataset classes: {len(self.class_names)}")
+            print(f"�️ Device: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
             return True
+            
         except Exception as e:
-            print(f"❌ Error loading ONNX model: {e}")
+            print(f"❌ Error loading PyTorch model: {e}")
             return False
             
     def start_camera(self):
         """Start the camera"""
         try:
-            self.cap = cv2.VideoCapture(1)  # Changed from 0 to 1
+            self.cap = cv2.VideoCapture(0)  # Using camera index 1 as specified
             if not self.cap.isOpened():
+                print("❌ Failed to open camera at index 1")
                 return False
                 
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             self.is_running = True
-            print("📹 Camera started")
+            print("📹 Camera started successfully")
             return True
         except Exception as e:
             print(f"❌ Error starting camera: {e}")
@@ -140,8 +125,8 @@ class WebcamPredictor:
         return frame
         
     def predict_character(self):
-        """Make a prediction on the current frame using ONNX model"""
-        if not self.current_frame is None and self.session:
+        """Make a prediction on the current frame using PyTorch YOLO model"""
+        if not self.current_frame is None and self.model:
             try:
                 height, width = self.current_frame.shape[:2]
                 roi_x = (width - self.roi_size) // 2
@@ -152,126 +137,67 @@ class WebcamPredictor:
                 
                 # Save original ROI for debugging
                 timestamp = int(time.time())
-                cv2.imwrite(f"{self.output_dir}/debug_roi_original_{timestamp}.jpg", roi)
+                cv2.imwrite(f"{self.output_dir}/debug_roi_{timestamp}.jpg", roi)
                 
-                # Preprocess the image for ONNX model
-                # Apply some image enhancement to better match training data
-                roi_enhanced = roi.copy()
+                # Run YOLO prediction
+                start_time = time.time()
+                results = self.model(roi, verbose=False)
+                inference_time = time.time() - start_time
                 
-                # Convert to grayscale and back to RGB for better contrast (optional)
-                gray = cv2.cvtColor(roi_enhanced, cv2.COLOR_BGR2GRAY)
-                # Apply some contrast enhancement
-                gray = cv2.equalizeHist(gray)
-                # Convert back to BGR
-                roi_enhanced = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                
-                # Resize to model input size (224x224)
-                roi_resized = cv2.resize(roi_enhanced, (224, 224))
-                
-                # Convert BGR to RGB
-                roi_rgb = cv2.cvtColor(roi_resized, cv2.COLOR_BGR2RGB)
-                
-                # Save enhanced and preprocessed image for debugging
-                cv2.imwrite(f"{self.output_dir}/debug_roi_enhanced_{timestamp}.jpg", 
-                           cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2BGR))
-                
-                # Try different normalization approaches
-                # Option 1: Simple [0,1] normalization (common for YOLO models)
-                roi_normalized_simple = roi_rgb.astype(np.float32) / 255.0
-                
-                # Option 2: ImageNet normalization (for models pretrained on ImageNet)
-                roi_normalized_imagenet = roi_rgb.astype(np.float32) / 255.0
-                mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-                std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-                roi_normalized_imagenet = (roi_normalized_imagenet - mean) / std
-                
-                # Try both normalizations and see which works better
-                predictions_results = []
-                
-                for norm_type, roi_normalized in [("simple", roi_normalized_simple), ("imagenet", roi_normalized_imagenet)]:
-                    # Transpose to CHW format and add batch dimension
-                    input_data = np.transpose(roi_normalized, (2, 0, 1)).astype(np.float32)
-                    input_data = np.expand_dims(input_data, axis=0)
-                    
-                    # Run inference
-                    start_time = time.time()
-                    outputs = self.session.run([self.output_name], {self.input_name: input_data})
-                    inference_time = time.time() - start_time
-                    
-                    # Process outputs
-                    logits = outputs[0][0]  # Remove batch dimension
-                    
-                    # Apply softmax to get probabilities
-                    exp_logits = np.exp(logits - np.max(logits))  # Numerical stability
-                    probabilities = exp_logits / np.sum(exp_logits)
+                # Process results
+                if len(results) > 0 and results[0].probs is not None:
+                    probs = results[0].probs
                     
                     # Get top predictions
-                    top_indices = np.argsort(probabilities)[::-1][:3]  # Top 3
+                    top_indices = probs.top5  # Top 5 predictions
+                    confidences = probs.top5conf.cpu().numpy()  # Convert to numpy
                     
                     if len(top_indices) > 0:
-                        top_class_id = top_indices[0]
-                        confidence = probabilities[top_class_id] * 100
-                        class_name = self.class_names[top_class_id] if top_class_id < len(self.class_names) else f"Class_{top_class_id}"
+                        top_class_id = top_indices[0]  # Already an int, no need for .item()
+                        confidence = confidences[0] * 100
                         
-                        predictions_results.append({
-                            "norm_type": norm_type,
+                        # Use our class names from lettersdatabase2
+                        if top_class_id < len(self.class_names):
+                            class_name = self.class_names[top_class_id]
+                        else:
+                            class_name = f"Class_{top_class_id}"
+                        
+                        # Update latest prediction
+                        self.latest_prediction = {
                             "class": class_name,
                             "confidence": confidence,
-                            "inference_time": inference_time,
-                            "top_indices": top_indices,
-                            "probabilities": probabilities
-                        })
-                
-                # Choose the best prediction (highest confidence)
-                if predictions_results:
-                    best_prediction = max(predictions_results, key=lambda x: x["confidence"])
-                    
-                    # Update latest prediction
-                    self.latest_prediction = {
-                        "class": best_prediction["class"],
-                        "confidence": best_prediction["confidence"],
-                        "timestamp": time.strftime("%H:%M:%S")
-                    }
-                    
-                    # Get top 3 predictions from best result
-                    top3_predictions = []
-                    for idx in best_prediction["top_indices"]:
-                        pred_class_name = self.class_names[idx] if idx < len(self.class_names) else f"Class_{idx}"
-                        conf = best_prediction["probabilities"][idx] * 100
-                        top3_predictions.append({"class": pred_class_name, "confidence": conf})
-                    
-                    # Save prediction with debug info
-                    frame_with_roi = self.current_frame.copy()
-                    cv2.rectangle(frame_with_roi, (roi_x, roi_y), 
-                                (roi_x + self.roi_size, roi_y + self.roi_size), 
-                                (0, 255, 0), 3)
-                    cv2.putText(frame_with_roi, f"ONNX ({best_prediction['norm_type']}): {best_prediction['class']} ({best_prediction['confidence']:.1f}%)", 
-                               (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                    cv2.putText(frame_with_roi, f"Time: {best_prediction['inference_time']:.3f}s", 
-                               (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    
-                    # Add debug info about both predictions
-                    y_offset = 100
-                    for result in predictions_results:
-                        cv2.putText(frame_with_roi, f"{result['norm_type']}: {result['class']} ({result['confidence']:.1f}%)", 
-                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
-                        y_offset += 25
-                    
-                    filename = f"{self.output_dir}/onnx_prediction_{timestamp}_{best_prediction['class']}.jpg"
-                    cv2.imwrite(filename, frame_with_roi)
-                    
-                    return {
-                        "success": True,
-                        "prediction": best_prediction["class"],
-                        "confidence": best_prediction["confidence"],
-                        "inference_time": best_prediction["inference_time"],
-                        "normalization": best_prediction["norm_type"],
-                        "top3": top3_predictions,
-                        "filename": filename,
-                        "debug": {
-                            "all_predictions": [{"norm": r["norm_type"], "class": r["class"], "conf": r["confidence"]} for r in predictions_results]
+                            "timestamp": time.strftime("%H:%M:%S")
                         }
-                    }
+                        
+                        # Get top 3 predictions
+                        top3_predictions = []
+                        for i in range(min(3, len(top_indices))):
+                            pred_class_id = top_indices[i]  # Already an int
+                            pred_conf = confidences[i] * 100
+                            pred_class_name = self.class_names[pred_class_id] if pred_class_id < len(self.class_names) else f"Class_{pred_class_id}"
+                            top3_predictions.append({"class": pred_class_name, "confidence": pred_conf})
+                        
+                        # Save prediction with debug info
+                        frame_with_roi = self.current_frame.copy()
+                        cv2.rectangle(frame_with_roi, (roi_x, roi_y), 
+                                    (roi_x + self.roi_size, roi_y + self.roi_size), 
+                                    (0, 255, 0), 3)
+                        cv2.putText(frame_with_roi, f"PyTorch: {class_name} ({confidence:.1f}%)", 
+                                   (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        cv2.putText(frame_with_roi, f"Time: {inference_time:.3f}s", 
+                                   (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                        
+                        filename = f"{self.output_dir}/pytorch_prediction_{timestamp}_{class_name}.jpg"
+                        cv2.imwrite(filename, frame_with_roi)
+                        
+                        return {
+                            "success": True,
+                            "prediction": class_name,
+                            "confidence": confidence,
+                            "inference_time": inference_time,
+                            "top3": top3_predictions,
+                            "filename": filename
+                        }
                         
                 return {"success": False, "error": "No predictions found"}
                 
@@ -281,7 +207,7 @@ class WebcamPredictor:
                 print(f"Detailed error: {error_details}")
                 return {"success": False, "error": str(e), "details": error_details}
                 
-        return {"success": False, "error": "No frame available or ONNX model not loaded"}
+        return {"success": False, "error": "No frame available or PyTorch model not loaded"}
 
 # Initialize the predictor
 predictor = WebcamPredictor()
@@ -333,7 +259,7 @@ if __name__ == '__main__':
     html_content = '''<!DOCTYPE html>
 <html>
 <head>
-    <title>YOLO Character Recognition</title>
+    <title>PyTorch YOLO Character Recognition</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; }
         .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
@@ -352,11 +278,14 @@ if __name__ == '__main__':
         .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
         .status.success { background-color: #d4edda; color: #155724; }
         .status.error { background-color: #f8d7da; color: #721c24; }
+        .pytorch-badge { background: linear-gradient(45deg, #ee4c2c, #ff6b35); color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; margin-left: 10px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎯 ONNX Character Recognition</h1>
+        <h1>🔥 PyTorch YOLO Character Recognition <span class="pytorch-badge">PyTorch</span></h1>
+        <p><strong>Model:</strong> /home/nvidia10/FinalProject/classify/train3/weights/best.pt</p>
+        <p><strong>Dataset:</strong> lettersdatabase2 (26 letter classes A-Z)</p>
         
         <div class="video-container">
             <img id="video" src="{{ url_for('video_feed') }}" width="640" height="480">
@@ -379,9 +308,10 @@ if __name__ == '__main__':
             <h3>📝 Instructions</h3>
             <ul>
                 <li>Click "Start Camera" to begin</li>
-                <li>Place a character or digit in the green box</li>
+                <li>Place a letter (A-Z) in the green box</li>
                 <li>Click "Predict Character" to analyze</li>
-                <li>Results are saved in the webcam_predictions folder</li>
+                <li>Results are saved in the pytorch_predictions folder</li>
+                <li>This GUI uses the PyTorch model trained on lettersdatabase2</li>
             </ul>
         </div>
     </div>
@@ -449,8 +379,10 @@ if __name__ == '__main__':
     with open('templates/index.html', 'w') as f:
         f.write(html_content)
     
-    print("🚀 Starting ONNX Character Recognition Web GUI...")
-    print("📱 Open your browser and go to: http://localhost:5000")
+    print("🚀 Starting PyTorch YOLO Character Recognition Web GUI...")
+    print("📱 Open your browser and go to: http://localhost:5001")
+    print("🔥 Using PyTorch model: /home/nvidia10/FinalProject/classify/train3/weights/best.pt")
+    print("📂 Dataset: lettersdatabase2 (26 letter classes A-Z)")
     print("🛑 Press Ctrl+C to stop the server")
     
-    app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
+    app.run(debug=False, host='0.0.0.0', port=5001, threaded=True)
