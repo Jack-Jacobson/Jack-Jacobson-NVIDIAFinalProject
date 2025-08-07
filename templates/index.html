@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PyTorch YOLO Character Recognition</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
+        .video-container { text-align: center; margin: 20px 0; }
+        .controls { text-align: center; margin: 20px 0; }
+        button { padding: 10px 20px; margin: 5px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; }
+        .start-btn { background-color: #4CAF50; color: white; }
+        .stop-btn { background-color: #f44336; color: white; }
+        .predict-btn { background-color: #2196F3; color: white; }
+        .results { background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        .prediction { font-size: 18px; font-weight: bold; color: #2196F3; }
+        .confidence { color: #4CAF50; }
+        .top3 { margin-top: 10px; }
+        .top3-item { margin: 5px 0; }
+        #video { border: 2px solid #ddd; border-radius: 10px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .status.success { background-color: #d4edda; color: #155724; }
+        .status.error { background-color: #f8d7da; color: #721c24; }
+        .pytorch-badge { background: linear-gradient(45deg, #ee4c2c, #ff6b35); color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; margin-left: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔥 PyTorch YOLO Character Recognition <span class="pytorch-badge">PyTorch</span></h1>
+        <p><strong>Model:</strong> /home/nvidia10/runs/classify/train3/weights/best.pt</p>
+        <p><strong>Dataset:</strong> lettersdatabase2 (26 letter classes A-Z)</p>
+        
+        <div class="video-container">
+            <img id="video" src="{{ url_for('video_feed') }}" width="640" height="480">
+        </div>
+        
+        <div class="controls">
+            <button class="start-btn" onclick="startCamera()">📹 Start Camera</button>
+            <button class="stop-btn" onclick="stopCamera()">🛑 Stop Camera</button>
+            <button class="predict-btn" onclick="predict()">🎯 Predict Character</button>
+        </div>
+        
+        <div id="status" class="status"></div>
+        
+        <div class="results">
+            <h3>📊 Latest Prediction Results</h3>
+            <div id="prediction-result">No predictions yet. Start camera and click predict!</div>
+        </div>
+        
+        <div class="results">
+            <h3>📝 Instructions</h3>
+            <ul>
+                <li>Click "Start Camera" to begin</li>
+                <li>Place a letter (A-Z) in the green box</li>
+                <li>Click "Predict Character" to analyze</li>
+                <li>Results are saved in the pytorch_predictions folder</li>
+                <li>This GUI uses the PyTorch model trained on lettersdatabase2</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        function showStatus(message, isError = false) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status ' + (isError ? 'error' : 'success');
+        }
+
+        function startCamera() {
+            fetch('/start_camera')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showStatus('Camera started successfully!');
+                    } else {
+                        showStatus('Failed to start camera', true);
+                    }
+                });
+        }
+
+        function stopCamera() {
+            fetch('/stop_camera')
+                .then(response => response.json())
+                .then(data => {
+                    showStatus('Camera stopped');
+                });
+        }
+
+        function predict() {
+            showStatus('Making prediction...');
+            fetch('/predict')
+                .then(response => response.json())
+                .then(data => {
+                    const resultDiv = document.getElementById('prediction-result');
+                    
+                    if (data.success) {
+                        let html = `
+                            <div class="prediction">🎯 Prediction: ${data.prediction}</div>
+                            <div class="confidence">📊 Confidence: ${data.confidence.toFixed(1)}%</div>
+                            <div class="top3">
+                                <strong>🏆 Top 3 Predictions:</strong>
+                        `;
+                        
+                        data.top3.forEach((pred, index) => {
+                            html += `<div class="top3-item">${index + 1}. ${pred.class}: ${pred.confidence.toFixed(1)}%</div>`;
+                        });
+                        
+                        html += `</div><div style="margin-top: 10px; color: #666;">💾 Saved: ${data.filename}</div>`;
+                        resultDiv.innerHTML = html;
+                        
+                        showStatus(`Predicted: ${data.prediction} (${data.confidence.toFixed(1)}%)`);
+                    } else {
+                        resultDiv.innerHTML = `<div style="color: red;">❌ Error: ${data.error}</div>`;
+                        showStatus('Prediction failed', true);
+                    }
+                });
+        }
+    </script>
+</body>
+</html>
