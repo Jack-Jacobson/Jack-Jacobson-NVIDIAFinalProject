@@ -36,10 +36,15 @@ yolo task=classify mode=predict model=/home/{USERNAME}/FinalProject/classify/tra
 ```
 NOTE: If you get an error, you may have to change source=1.  
 
-Activate the web-based GUI to see Live Camera Output and Prediction
+Activate the web-based GUI to see Live Camera Output and Prediction In order for this to work, go to this file and go to line 33 AND 43 to include your username instead of {USERNAME}
 
 ```bash
 python3 webcam_pytorch_gui.py
 ```
 
-This will output a link to the webgui.
+This will output a link to the webgui. Note that if you get error "Failed to start camera", go to line 73 and change the 0 to the 1, this should resolve it.
+
+## Images
+
+An example of the WebUI:
+<img width="1468" height="1136" alt="image" src="https://github.com/user-attachments/assets/daf4e295-668f-4b9c-8ad2-6ba12d807f7d" />
